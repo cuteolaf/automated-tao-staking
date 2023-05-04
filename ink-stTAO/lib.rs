@@ -6,7 +6,6 @@ mod st_tao {
 
     /// A simple ERC-20 contract.
     #[ink(storage)]
-    #[derive(Default)]
     pub struct Erc20 {
         /// Total token supply.
         total_supply: Balance,
@@ -15,6 +14,10 @@ mod st_tao {
         /// Mapping of the token amount which an account is allowed to withdraw
         /// from another account.
         allowances: Mapping<(AccountId, AccountId), Balance>,
+        /// Address of the proxy wallet
+        proxy: AccountId,
+        /// Owner of the contract
+        admin: AccountId,
     }
 
     /// Event emitted when a token transfer occurs.
@@ -46,6 +49,10 @@ mod st_tao {
         InsufficientBalance,
         /// Returned if not enough allowance to fulfill a request is available.
         InsufficientAllowance,
+        /// Only admin can set the proxy address
+        NotAdmin,
+        /// Only the proxy account can mint tokens
+        NotProxy,
     }
 
     /// The ERC-20 result type.
@@ -55,7 +62,7 @@ mod st_tao {
         /// Creates a new ERC-20 contract with the specified initial supply.
         #[ink(constructor)]
         pub fn new(total_supply: Balance) -> Self {
-            let total_supply = total_supply.saturating_mul(10_u128.pow(12));
+            let total_supply = total_supply.saturating_mul(10_u128.pow(9));
             let mut balances = Mapping::default();
             let caller = Self::env().caller();
             balances.insert(caller, &total_supply);
@@ -68,6 +75,8 @@ mod st_tao {
                 total_supply,
                 balances,
                 allowances: Default::default(),
+                proxy: AccountId::from([0x0; 32]),
+                admin: caller,
             }
         }
 
@@ -80,7 +89,7 @@ mod st_tao {
         /// Returns the decimals
         #[ink(message)]
         pub fn decimals(&self) -> u8 {
-            12
+            9
         }
 
         /// Returns the account balance for the specified `owner`.
@@ -218,6 +227,48 @@ mod st_tao {
                 value,
             });
             Ok(())
+        }
+
+        /// Get proxy address
+        #[ink(message)]
+        pub fn get_proxy(&self) -> AccountId {
+            self.proxy
+        }
+
+        /// Sets the proxy address
+        #[ink(message)]
+        pub fn set_proxy(&mut self, proxy: AccountId) -> Result<()> {
+            let caller = self.env().caller();
+            if caller != self.admin {
+                Err(Error::NotAdmin)
+            } else {
+                self.allowances.insert((&self.admin, &self.proxy), &0);
+                self.proxy = proxy;
+                self.approve(proxy, u128::MAX)?;
+                Ok(())
+            }
+        }
+
+        /// Get admin address
+        #[ink(message)]
+        pub fn get_admin(&self) -> AccountId {
+            self.admin
+        }
+
+        /// Mint stTAO to users
+        pub fn mint(&mut self, recipient: AccountId, amount: Balance) -> Result<()> {
+            let caller = self.env().caller();
+            let admin = self.admin;
+            if caller != self.proxy {
+                return Err(Error::NotProxy);
+            }
+            let remaining = self.balance_of(admin);
+            if remaining < amount {
+                Err(Error::InsufficientBalance)
+            } else {
+                self.transfer_from_to(&admin, &recipient, amount)?;
+                Ok(())
+            }
         }
     }
 
