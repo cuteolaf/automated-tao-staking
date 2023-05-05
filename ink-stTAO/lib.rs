@@ -62,7 +62,6 @@ mod st_tao {
         /// Creates a new ERC-20 contract with the specified initial supply.
         #[ink(constructor)]
         pub fn new(total_supply: Balance) -> Self {
-            let total_supply = total_supply.saturating_mul(10_u128.pow(9));
             let mut balances = Mapping::default();
             let caller = Self::env().caller();
             balances.insert(caller, &total_supply);
@@ -276,7 +275,10 @@ mod st_tao {
     mod tests {
         use super::*;
 
-        use ink::primitives::{Clear, Hash};
+        use ink::{
+            env::{test::DefaultAccounts, DefaultEnvironment},
+            primitives::{AccountId, Clear, Hash},
+        };
 
         type Event = <Erc20 as ::ink::reflect::ContractEventBase>::Type;
 
@@ -377,7 +379,7 @@ mod st_tao {
                 Some(AccountId::from([0x01; 32])),
                 100,
             );
-            let accounts = ink::env::test::default_accounts::<ink::env::DefaultEnvironment>();
+            let accounts = get_default_accounts();
             // Alice owns all the tokens on contract instantiation
             assert_eq!(erc20.balance_of(accounts.alice), 100);
             // Bob does not owns tokens
@@ -389,7 +391,7 @@ mod st_tao {
             // Constructor works.
             let mut erc20 = Erc20::new(100);
             // Transfer event triggered during initial construction.
-            let accounts = ink::env::test::default_accounts::<ink::env::DefaultEnvironment>();
+            let accounts = get_default_accounts();
 
             assert_eq!(erc20.balance_of(accounts.bob), 0);
             // Alice transfers 10 tokens to Bob.
@@ -419,14 +421,14 @@ mod st_tao {
         fn invalid_transfer_should_fail() {
             // Constructor works.
             let mut erc20 = Erc20::new(100);
-            let accounts = ink::env::test::default_accounts::<ink::env::DefaultEnvironment>();
+            let accounts = get_default_accounts();
 
             assert_eq!(erc20.balance_of(accounts.bob), 0);
 
             // Set the contract as callee and Bob as caller.
-            let contract = ink::env::account_id::<ink::env::DefaultEnvironment>();
-            ink::env::test::set_callee::<ink::env::DefaultEnvironment>(contract);
-            ink::env::test::set_caller::<ink::env::DefaultEnvironment>(accounts.bob);
+            let contract = ink::env::account_id::<DefaultEnvironment>();
+            ink::env::test::set_callee::<DefaultEnvironment>(contract);
+            ink::env::test::set_caller::<DefaultEnvironment>(accounts.bob);
 
             // Bob fails to transfers 10 tokens to Eve.
             assert_eq!(
@@ -454,7 +456,7 @@ mod st_tao {
             // Constructor works.
             let mut erc20 = Erc20::new(100);
             // Transfer event triggered during initial construction.
-            let accounts = ink::env::test::default_accounts::<ink::env::DefaultEnvironment>();
+            let accounts = get_default_accounts();
 
             // Bob fails to transfer tokens owned by Alice.
             assert_eq!(
@@ -468,9 +470,9 @@ mod st_tao {
             assert_eq!(ink::env::test::recorded_events().count(), 2);
 
             // Set the contract as callee and Bob as caller.
-            let contract = ink::env::account_id::<ink::env::DefaultEnvironment>();
-            ink::env::test::set_callee::<ink::env::DefaultEnvironment>(contract);
-            ink::env::test::set_caller::<ink::env::DefaultEnvironment>(accounts.bob);
+            let contract = ink::env::account_id::<DefaultEnvironment>();
+            ink::env::test::set_callee::<DefaultEnvironment>(contract);
+            ink::env::test::set_caller::<DefaultEnvironment>(accounts.bob);
 
             // Bob transfers tokens from Alice to Eve.
             assert_eq!(
@@ -502,7 +504,7 @@ mod st_tao {
         #[ink::test]
         fn allowance_must_not_change_on_failed_transfer() {
             let mut erc20 = Erc20::new(100);
-            let accounts = ink::env::test::default_accounts::<ink::env::DefaultEnvironment>();
+            let accounts = get_default_accounts();
 
             // Alice approves Bob for token transfers on her behalf.
             let alice_balance = erc20.balance_of(accounts.alice);
@@ -510,9 +512,9 @@ mod st_tao {
             assert_eq!(erc20.approve(accounts.bob, initial_allowance), Ok(()));
 
             // Get contract address.
-            let callee = ink::env::account_id::<ink::env::DefaultEnvironment>();
-            ink::env::test::set_callee::<ink::env::DefaultEnvironment>(callee);
-            ink::env::test::set_caller::<ink::env::DefaultEnvironment>(accounts.bob);
+            let callee = ink::env::account_id::<DefaultEnvironment>();
+            ink::env::test::set_callee::<DefaultEnvironment>(callee);
+            ink::env::test::set_caller::<DefaultEnvironment>(accounts.bob);
 
             // Bob tries to transfer tokens from Alice to Eve.
             let emitted_events_before = ink::env::test::recorded_events().count();
@@ -530,6 +532,111 @@ mod st_tao {
                 emitted_events_before,
                 ink::env::test::recorded_events().count()
             )
+        }
+
+        #[ink::test]
+        fn admin_set_correctly_in_constructor() {
+            let erc20: Erc20 = Erc20::new(10_000);
+            let owner = ink::env::test::callee::<DefaultEnvironment>();
+            assert_eq!(erc20.get_admin(), owner);
+            assert_eq!(erc20.get_admin(), erc20.admin);
+        }
+
+        #[ink::test]
+        fn set_proxy_works() {
+            let mut erc20 = Erc20::new(10_000);
+
+            assert_eq!(erc20.proxy, AccountId::from([0x0; 32]));
+
+            let accounts = get_default_accounts();
+
+            let proxy = accounts.alice;
+
+            assert_eq!(erc20.set_proxy(proxy), Ok(()));
+            assert_eq!(erc20.proxy, proxy);
+            assert_eq!(erc20.get_proxy(), proxy);
+            assert_eq!(erc20.allowance(erc20.admin, proxy), u128::MAX);
+
+            let new_proxy = accounts.bob;
+            assert_eq!(erc20.set_proxy(new_proxy), Ok(()));
+            assert_eq!(erc20.proxy, new_proxy);
+            assert_eq!(erc20.allowance(erc20.admin, proxy), 0);
+            assert_eq!(erc20.allowance(erc20.admin, new_proxy), u128::MAX);
+        }
+
+        #[ink::test]
+        fn set_proxy_fails() {
+            // Only the admin can set proxy address
+            let mut erc20 = Erc20::new(10_000);
+            let accounts = get_default_accounts();
+            set_caller(accounts.bob);
+            assert_eq!(erc20.set_proxy(accounts.alice), Err(Error::NotAdmin));
+        }
+
+        #[ink::test]
+        fn proxy_mint_success() {
+            let mut erc20 = Erc20::new(10_000);
+            let owner = erc20.get_admin();
+
+            let admin_balance = erc20.balance_of(owner);
+            assert_eq!(admin_balance, erc20.total_supply());
+
+            let accounts = get_default_accounts();
+            let bob = accounts.bob;
+            let proxy = accounts.charlie;
+            let amount = 100;
+
+            assert_eq!(erc20.balance_of(proxy), 0);
+            assert_eq!(erc20.balance_of(bob), 0);
+
+            // set proxy account
+            assert_eq!(erc20.set_proxy(proxy), Ok(()));
+
+            set_caller(proxy);
+            // mint success
+            assert_eq!(erc20.mint(bob, amount), Ok(()));
+            assert_eq!(erc20.balance_of(bob), amount);
+            assert_eq!(erc20.balance_of(proxy), 0);
+            assert_eq!(admin_balance - erc20.balance_of(owner), amount);
+
+            // mint fails (insufficient balance)
+            let django = accounts.django;
+            assert_eq!(
+                erc20.mint(django, erc20.total_supply()),
+                Err(Error::InsufficientBalance)
+            );
+
+            // update proxy
+            set_caller(owner);
+            let new_proxy = accounts.eve;
+            assert_eq!(erc20.set_proxy(new_proxy), Ok(()));
+
+            let old_proxy = proxy;
+            // old proxy should not be able to mint tokens
+            set_caller(old_proxy);
+            assert_eq!(erc20.mint(django, 100), Err(Error::NotProxy));
+        }
+
+        #[ink::test]
+        fn proxy_mint_fails() {
+            let mut erc20 = Erc20::new(10_000);
+            let accounts = get_default_accounts();
+
+            // proxy is not set
+            assert_eq!(erc20.mint(accounts.bob, 100), Err(Error::NotProxy));
+
+            // set proxy
+            assert_eq!(erc20.set_proxy(accounts.bob), Ok(()));
+            // even the admin cannot mint tokens
+            assert_eq!(erc20.mint(accounts.charlie, 100), Err(Error::NotProxy));
+        }
+
+        fn set_caller(caller: AccountId) {
+            ink::env::test::set_caller::<DefaultEnvironment>(caller);
+        }
+
+        fn get_default_accounts() -> DefaultAccounts<DefaultEnvironment> {
+            ink::env::test::default_accounts::<DefaultEnvironment>()
         }
 
         /// For calculating the event topic hash.
