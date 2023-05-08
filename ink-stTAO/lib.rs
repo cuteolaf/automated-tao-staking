@@ -255,6 +255,7 @@ mod st_tao {
         }
 
         /// Mint stTAO to users
+        #[ink(message)]
         pub fn mint(&mut self, recipient: AccountId, amount: Balance) -> Result<()> {
             let caller = self.env().caller();
             let admin = self.admin;
