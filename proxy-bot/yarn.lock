@@ -38,6 +38,20 @@
     rxjs "^7.8.1"
     tslib "^2.5.0"
 
+"@polkadot/api-contract@^10.5.1":
+  version "10.5.1"
+  resolved "https://npm-registry.anagolay.network/@polkadot/api-contract/-/api-contract-10.5.1.tgz#00c9a4a846b6874d4015911cf2a8082e48141306"
+  integrity sha512-DaUZr68qL8ZKrFgxkq3LrJRd+hWbiIqqeTSabpxb50bHyQxSq2KRu1ek97D9BhId5aoyX8X3AJYRbX/vVydZLQ==
+  dependencies:
+    "@polkadot/api" "10.5.1"
+    "@polkadot/types" "10.5.1"
+    "@polkadot/types-codec" "10.5.1"
+    "@polkadot/types-create" "10.5.1"
+    "@polkadot/util" "^12.1.1"
+    "@polkadot/util-crypto" "^12.1.1"
+    rxjs "^7.8.1"
+    tslib "^2.5.0"
+
 "@polkadot/api-derive@10.5.1":
   version "10.5.1"
   resolved "https://npm-registry.anagolay.network/@polkadot/api-derive/-/api-derive-10.5.1.tgz#217d4ef65091e792e42bbaf4214b22d64866ae47"
