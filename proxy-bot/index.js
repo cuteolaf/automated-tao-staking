@@ -15,6 +15,8 @@ const STTAO_CONTACT_ADDRESS =
 const PROXY_SEED =
   process.env.PROXY_SEED ||
   "young describe sugar civil bench dizzy salt submit balance trade appear frozen";
+const NI_HOTKEY =
+  process.env.NI_HOTKEY || "5GcBK8PDrVifV1xAf4Qkkk6KsbsmhDdX9atvk8vyKU8xdU63";
 
 const proxyBot = async () => {
   // Connect to Bittensor network
@@ -25,8 +27,10 @@ const proxyBot = async () => {
   await api.isReady;
   console.log("API is ready");
 
-  // Connect to contracts node
+  // existential deposit on bitensor network
+  const existentialDeposit = api.consts.balances.existentialDeposit;
 
+  // Connect to contracts node
   console.log("Connecting to contracts node");
   const contractApi = new ApiPromise({
     provider: new WsProvider(URL_CONTRACT_NODE),
@@ -48,10 +52,14 @@ const proxyBot = async () => {
   const proxyOnBt = keyringBt.createFromUri(PROXY_SEED);
   const proxyOnCN = keyringCN.createFromUri(PROXY_SEED);
 
+  // get nonce
+  const { nonce } = await contractApi.query.system.account(proxyOnCN.address);
+  let activeNonce = nonce;
+
   const mintTokens = async (to, amount) => {
     const MAX_CALL_WEIGHT = new BN(5_000_000_000_000).isub(BN_ONE);
     const PROOFSIZE = new BN(1_000_000);
-    const { gasRequired, result, output } = await stTao.query.mint(
+    const { gasRequired } = await stTao.query.mint(
       proxyOnCN.address,
       {
         gasLimit: contractApi.registry.createType("WeightV2", {
@@ -64,25 +72,21 @@ const proxyBot = async () => {
       amount
     );
     const gasLimit = api.registry.createType("WeightV2", gasRequired);
-    await stTao.tx
+    stTao.tx
       .mint({ gasLimit, storageDepositLimit: null }, to, amount)
-      .signAndSend(proxyOnCN, async (res) => {
+      .signAndSend(proxyOnCN, { nonce: activeNonce }, async (res) => {
         if (res.status.isInBlock) {
-          console.log("in a block");
+          // console.log(`Minting ${amount} stTAOs to ${to}`);
         } else if (res.status.isFinalized) {
-          console.log("finalized");
+          console.log(`Successfully minted ${amount} stTAOs to ${to}`);
         }
       });
+    ++activeNonce;
   };
 
   // Subscribe to system events via storage
   api.query.system.events((events) => {
     const now = new Date();
-    console.log(
-      `${now.toLocaleDateString()} ${now.toLocaleTimeString()}: Received ${
-        events.length
-      } event(s)`
-    );
     events.forEach((record) => {
       const { event } = record;
       const { section, method, data } = event;
@@ -92,7 +96,9 @@ const proxyBot = async () => {
       const to = data[1].toString();
       const amount = data[2].toString();
       if (to === proxyOnBt.address) {
-        console.log(`Received ${amount} TAOs from ${from}`);
+        console.log(
+          `${now.toLocaleDateString()} ${now.toLocaleTimeString()}: Received ${amount} TAOs from ${from}`
+        );
         // The proxy bot should mint stTAO tokens to the sender
         mintTokens(
           keyringCN.encodeAddress(keyringBt.decodeAddress(from)),
@@ -100,6 +106,23 @@ const proxyBot = async () => {
         );
       }
     });
+  });
+
+  api.query.system.account(proxyOnBt.address, ({ data: { free } }) => {
+    if (!free.gt(existentialDeposit)) return;
+    const stakable = free - existentialDeposit;
+    // call
+    api.tx.subtensorModule
+      .addStake(NI_HOTKEY, stakable)
+      .signAndSend(proxyOnBt, (res) => {
+        const error = res.events.filter(
+          ({ event: { section, method } }) =>
+            section === "system" && method === "ExtrinsicFailed"
+        );
+        if (error.length) console.error(error[0].toHuman());
+        if (res.isFinalized)
+          console.log(`Successfully staked ${stakable.toString()} TAOs`);
+      });
   });
 };
 
